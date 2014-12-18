@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<title>Store PHP variables to PHP code</title>
+
+<meta charset="utf-8">
+
+<style type="text/css">
+body {
+    font-family: Verdana, Arial, Helvetica, sans-serif;
+    font-size: 14px;
+}
+</style>
+
+</head>
+
+<body>
+
+<h1>Store PHP variables to PHP code</h1>
+
+<p>One of those crazy ideas once crossed my mind has proven to be very successful. It has managed to get into many of my projects with no problems so far.</p>
+
+<p>The idea of storing a PHP variable - any kind of variable - into a regular PHP file serves the same purpose as storing it in the form of JSON, XML or a serialized PHP string.</p>
+
+<p>What is better with this method is mainly speed. The system reads native PHP code faster than parsing JSON, XML, PHP serialized strings etc. And there is more to it. The storage takes the form or a PHP file so it can't be accessed by a direct call from a web browser. It is readable, it is editable, and did I mention it's blazing fast?</p>
+
+<p>So lets jump straight into the code. It is a relatively small script after all.</p>
+
+<pre>/**
+ * PhpVarEncoder
+ *
+ * @version 1.0
+ * @author Creative Pulse
+ * @copyright Creative Pulse 2014
+ * @license http://www.gnu.org/licenses/gpl-2.0.html GNU/GPL
+ * @link http://www.creativepulse.gr
+ */
+
+class PhpVarEncoder {
+    public $error_code;
+    public $error_msg;
+    public $output;
+    public $padding = &quot;\t&quot;;
+    public $lf = &quot;\r\n&quot;;
+    private $level;
+    public $esc_hi_bit = false;
+
+    public function obj_init($inst_name, $service, $srv_group, $pars = null) {
+        parent::obj_init($inst_name, $service, $srv_group, $pars);
+        $this-&gt;is_default = true;
+        $this-&gt;version = '2.0-dev2014';
+    }
+
+    public function esc_str($input) {
+        $result = '';
+        for ($i = 0, $len = strlen($input); $i &lt; $len; $i++) {
+            $c = $input[$i];
+            if ($c == '&quot;') {
+                $result .= '\\&quot;';
+            }
+            else if ($c == '\\') {
+                $result .= '\\\\';
+            }
+            else if ($c == '$') {
+                $result .= '\\$';
+            }
+            else if ($c == &quot;\n&quot; || $c == &quot;\r&quot; || $c == &quot;\t&quot; || $c &gt;= ' ') {
+                $result .= $c;
+            }
+            else if ($c &lt; ' ' || ($this-&gt;esc_hi_bit &amp;&amp; $c &gt; '~')) {
+                $result .= sprintf('\\x%02X', ord($c));
+            }
+            else {
+                $result .= $c;
+            }
+        }
+        return $result;
+    }
+
+    private function recurse_encode($data) {
+        if ($this-&gt;level == 0) {
+            $this-&gt;output .= '$__v = ';
+        }
+
+        $data_type = gettype($data);
+        switch ($data_type) {
+            case 'boolean':
+                $this-&gt;output .= ($data ? 'true' : 'false') . ',';
+                break;
+
+            case 'integer':
+            case 'double':
+                $this-&gt;output .= $data . ',';
+                break;
+
+            case 'string':
+                $this-&gt;output .= '&quot;' . $this-&gt;esc_str($data) . '&quot;,';
+                break;
+
+            case 'NULL':
+                $this-&gt;output .= 'null,';
+                break;
+
+            case 'object':
+                $data = get_object_vars($data);
+            case 'array':
+                $plain_array = false;
+                if ($data_type == 'array') {
+                    $plain_array = true;
+                    $idx = -1;
+                    foreach (array_keys($data) as $k) {
+                        $idx++;
+                        if ($idx !== $k) {
+                            $plain_array = false;
+                            break;
+                        }
+                    }
+                }
+
+                $this-&gt;level++;
+                $this-&gt;output .= 'array(' . $this-&gt;lf . str_repeat($this-&gt;padding, $this-&gt;level);
+
+                $first = true;
+                foreach ($data as $k =&gt; $v) {
+                    if ($first) {
+                        $first = false;
+                    }
+                    else {
+                        $this-&gt;output .= $this-&gt;lf . str_repeat($this-&gt;padding, $this-&gt;level);
+                    }
+
+                    if (!$plain_array) {
+                        switch (gettype($k)) {
+                            case 'integer':
+                            case 'double':
+                                $this-&gt;output .= $k . ' =&gt; ';
+                                break;
+
+                            case 'string':
+                                $this-&gt;output .= '&quot;' . $this-&gt;esc_str($k) . '&quot; =&gt; ';
+                                break;
+
+                            default:
+                                $this-&gt;error_code = 'UNSUPPORTED_DATA_TYPE';
+                                $this-&gt;error_msg = 'Attempted to encode to an unsupported data type';
+                                return;
+                        }
+                    }
+
+                    $this-&gt;recurse_encode($v);
+                    if ($this-&gt;error_code != '') {
+                        break;
+                    }
+                }
+
+                $this-&gt;level--;
+                $this-&gt;output .= $this-&gt;lf . str_repeat($this-&gt;padding, $this-&gt;level) . '),';
+
+                break;
+
+            case 'resource':
+                $this-&gt;error_code = 'UNSUPPORTED_DATA_TYPE';
+                $this-&gt;error_msg = 'Attempted to encode to an unsupported data type';
+                break;
+
+            default:
+                $this-&gt;error_code = 'UNRECOGNIZED_DATA_TYPE';
+                $this-&gt;error_msg = 'Attempted to encode to an unrecognized data type';
+        }
+
+        if ($this-&gt;level == 0) {
+            $this-&gt;output[strlen($this-&gt;output) - 1] = ';';
+        }
+    }
+
+    public function encode($data, $return_result = true) {
+        $this-&gt;error_code = '';
+        $this-&gt;error_msg = '';
+        $this-&gt;output = '';
+        $this-&gt;level = 0;
+
+        $this-&gt;recurse_encode($data);
+
+        if ($this-&gt;error_code != '') {
+            return false;
+        }
+        else if ($return_result) {
+            return $this-&gt;output;
+        }
+        else {
+            return true;
+        }
+    }
+
+    public function save($filename) {
+        return @file_put_contents($filename, &quot;&lt;?php\n\n&quot; . $this-&gt;output . &quot;\n\n?&gt;&quot;);
+    }
+
+    public function encode_save($filename, $data) {
+        if (!$this-&gt;encode($data, false)) {
+            return false;
+        }
+        return $this-&gt;save($filename);
+    }
+}</pre>
+
+<p>That was the script you can copy/paste to your project. Before you start, let's see some examples. The input can be any form of a PHP variable. In this case let's take a very demanding array, one that contains many different types of variables including an object.</p>
+
+<pre>$obj = new stdClass();
+$obj-&gt;property1 = 'value1';
+$obj-&gt;property2 = 'value2';
+
+$var = array(
+    'key1' =&gt; 123,
+    'key2' =&gt; 'abc' . &quot;\t&quot; . 'def' . &quot;\0ghi&quot;,
+    'key3' =&gt; array(
+        'sub_key1' =&gt; false,
+        'sub_key2' =&gt; null,
+        7 =&gt; 'string value'
+    ),
+    'key4' =&gt; $obj
+);</pre>
+
+<p>There are a couple of ways you can use the script. In this example we will try to save this array straight into a file. All you have to do is create an instance of the class and call the encode_save() method:</p>
+
+<pre>$encoder = new PhpVarEncoder();
+$encoder-&gt;encode_save('/path/to/file.php', $var);</pre>
+
+<p>The output file gets this content:</p>
+
+<pre>$__v = array(
+    &quot;key1&quot; =&gt; 123,
+    &quot;key2&quot; =&gt; &quot;abc  def\x00ghi&quot;,
+    &quot;key3&quot; =&gt; array(
+        &quot;sub_key1&quot; =&gt; false,
+        &quot;sub_key2&quot; =&gt; null,
+        7 =&gt; &quot;string value&quot;,
+    ),
+    &quot;key4&quot; =&gt; array(
+        &quot;property1&quot; =&gt; &quot;value1&quot;,
+        &quot;property2&quot; =&gt; &quot;value2&quot;,
+    ),
+);</pre>
+
+<p>You can now require() or include() this file from anywhere in your project and load the variable as <tt>$__v</tt> .</p>
+
+<p>If you wonder why the script saves the content in such a weird named variable it is because this name ($__v) is short and at the same time very uncommon. That way there is minimal chance it conflicts other variables in your project.</p>
+
+<p>This article was originally published in <a href="http://www.creativepulse.gr/en/blog/2014/store-php-variables-to-php-code">http://www.creativepulse.gr/en/blog/2014/store-php-variables-to-php-code</a> on 2014-11-17.</p>
+
+</body>
+</html>
